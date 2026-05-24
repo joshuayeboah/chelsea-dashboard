@@ -1,0 +1,39 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+venv/
+env/
+.env
+*.so
+
+# React
+node_modules/
+build/
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vite
+dist/
+dist-ssr/
+*.local
+
+# Common
+.DS_Store
+Thumbs.db
+*.log
+*.bak
+*.tmp
+*.swp
+*~
+
+.idea/
+*.sublime-*
+
+# Local environment files
+.env
+.env.local
+.env.*.local
