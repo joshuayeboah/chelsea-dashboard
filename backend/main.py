@@ -1,12 +1,30 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
 from typing import Optional
-import json
-import math
-from pathlib import Path
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.background import BackgroundScheduler
+from database import init_db, get_players_with_all_filters, get_all_players
+from scrapers import run_all_scrapers
 
-app = FastAPI(title="Chelsea Transfer Dashboard API", version="1.0.0")
+
+
+
+
+
+
+
+scheduler = BackgroundScheduler()
+scheduler.add_job(run_all_scrapers, "cron", day_of_week='sun', hour=3, minute=0)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
+
+app = FastAPI(title="Chelsea Transfer Dashboard API", version="2.0.0", lifespan = lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -14,12 +32,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-DATA_PATH = Path(__file__).parent / "transfers.json"
-
-def load_transfers():
-    with open(DATA_PATH) as f:
-        return json.load(f)
 
 POSITION_GROUPS = {
     "GK": ["GK"],
@@ -35,8 +47,8 @@ def get_position_group(position: str) -> str:
     return "OTHER"
 
 def compute_metrics(player: dict) -> dict:
-    minutes = player["minutes_played"]
-    fee = player["fee_million"]
+    minutes = player.get('minutes_played') or 0
+    fee = player.get('fee_million') or 0
     nineties = minutes / 90 if minutes > 0 else 0
 
     cost_per_90 = round(fee / nineties, 2) if nineties > 0 else None
@@ -101,27 +113,16 @@ def get_transfers(
     min_fee: Optional[float] = Query(None),
     max_fee: Optional[float] = Query(None),
 ):
-    transfers = load_transfers()
-    results = [compute_metrics(p) for p in transfers]
-
-    if position_group:
-        results = [r for r in results if r["position_group"] == position_group.upper()]
-    if season:
-        results = [r for r in results if r["season"] == season]
-    if status:
-        results = [r for r in results if r["status"] == status]
-    if min_fee is not None:
-        results = [r for r in results if r["fee_million"] >= min_fee]
-    if max_fee is not None:
-        results = [r for r in results if r["fee_million"] <= max_fee]
+   
+    players = get_players_with_all_filters(position_group, season, status, min_fee, max_fee)
+    results = [compute_metrics(p) for p in players]
 
     return {"count": len(results), "transfers": results}
 
 
 @app.get("/metrics/summary")
 def get_summary():
-    transfers = load_transfers()
-    players = [compute_metrics(p) for p in transfers]
+    players = [compute_metrics(p) for p in get_all_players()]
 
     total_spend = sum(p["fee_million"] for p in players)
     total_current_value = sum(p["market_value_now"] for p in players)
@@ -176,8 +177,7 @@ def get_value_quadrants():
     - Bargains: low fee, high performance
     - Dead weight: low minutes, low performance
     """
-    transfers = load_transfers()
-    players = [compute_metrics(p) for p in transfers]
+    players = [compute_metrics(p) for p in get_all_players()]
 
     paid = [p for p in players if p["fee_million"] > 0]
     if not paid:
@@ -209,8 +209,7 @@ def get_value_quadrants():
 @app.get("/metrics/squad-gaps")
 def get_squad_gaps():
     """Identify positional depth and age profile issues."""
-    transfers = load_transfers()
-    players = [compute_metrics(p) for p in transfers]
+    players = [compute_metrics(p) for p in get_all_players()]
     active = [p for p in players if p["status"] in ("active", "loan")]
 
     depth = {}
