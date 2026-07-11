@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
-from database import init_db, get_players_with_all_filters, get_all_players
+from database import init_db, get_players_with_filters, get_all_players
 from scrapers import run_all_scrapers
 
 
@@ -62,11 +62,9 @@ def compute_metrics(player: dict) -> dict:
     xg_xa_per_90 = round(xg_xa / nineties, 2) if nineties > 0 else 0
 
     # Value score: market_value / fee (>1 = appreciated, <1 = depreciated)
-    # Free transfers get a special treatment
-    if fee > 0:
-        value_score = round(player["market_value_now"] / fee, 2)
-    else:
-        value_score = None  # Free transfers shown separately
+
+    market_value = player.get('market_value_now') or 0
+    value_score = round(market_value / fee, 2) if fee > 0 else None
 
     # Minutes utilisation: % of possible minutes played (rough 3800 per full season)
     seasons_at_club = max(1, _seasons_active(player["season"]))
@@ -75,6 +73,12 @@ def compute_metrics(player: dict) -> dict:
 
     # Injury flag: less than 40% utilisation
     injury_flag = minutes_util < 40
+
+    sale_fee = player.get('sale_fee_million')
+    if sale_fee is not None:
+        profit_loss = round(sale_fee - fee, 1)
+    else:
+        profit_loss = round(market_value - fee, 1)
 
     return {
         **player,
@@ -86,7 +90,7 @@ def compute_metrics(player: dict) -> dict:
         "value_score": value_score,
         "minutes_util": minutes_util,
         "injury_flag": injury_flag,
-        "profit_loss": round(player["market_value_now"] - fee, 1),
+        "profit_loss": profit_loss
     }
 
 def _seasons_active(season_signed: str) -> int:
@@ -229,6 +233,21 @@ def get_squad_gaps():
 
 @app.get("/seasons")
 def get_seasons():
-    transfers = load_transfers()
-    seasons = sorted(set(p["season"] for p in transfers))
+    players = get_all_players()
+    seasons = sorted(set(p["season"] for p in players if p.get("season")))
     return {"seasons": seasons}
+
+@app.post("/scrape")
+def trigger_scrape(background_tasks: BackgroundTasks):
+    background_tasks.add_task(run_all_scrapers)
+    return {"message": "Scrape started in background"}
+
+@app.get("/scrape/status")
+def scrape_status():
+    from database import get_connection
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM scrape_log ORDER BY ran_at DESC LIMIT 10")
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return {"logs": rows}
