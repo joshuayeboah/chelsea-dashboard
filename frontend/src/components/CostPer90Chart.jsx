@@ -34,7 +34,7 @@ const CustomTooltip = ({ active, payload, label }) => {
 
 export default function CostPer90Chart({ data }) {
   const sorted = [...data]
-    .filter(d => d.cost_per_90 !== null && d.fee_million > 0)
+    .filter(d => d.cost_per_90 !== null && d.fee_million > 0 && d.minutes_played > 0)
     .sort((a, b) => b.cost_per_90 - a.cost_per_90)
     .slice(0, 15)
 

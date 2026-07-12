@@ -68,7 +68,7 @@ export default function PlayerTable({ data }) {
       <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h3 style={{ fontSize: 15, fontWeight: 700 }}>All signings</h3>
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{data.length} players · Boehly era</p>
+          <p style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{data.length} players · BlueCo era</p>
         </div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {SORT_OPTIONS.map(opt => (

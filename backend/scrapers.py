@@ -1,341 +1,320 @@
 """
-scrapers.py — pulls live transfer and performance data from transfermarkt and fbref
+scrapers.py — pulls live transfer and performance data from API-Football (api-sports.io)
 
-
-Both sites block naive scrapers, so we use:
-  - Realistic browser headers
-  - Random delays between requests
-  - Retry logic with backoff
+Free tier: 100 requests/day
+Chelsea team ID: 49
+Premier League ID: 39
 """
 
-import time
-import random
+import os
 import logging
 from datetime import datetime
-from typing import Optional
-
+from dotenv import load_dotenv
 import requests
-from bs4 import BeautifulSoup
 
 from database import (
     get_all_players, upsert_player, upsert_performance,
     insert_market_value, log_scrape
 )
 
+load_dotenv()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Shared HTTP helpers
+API_KEY = os.getenv("API_FOOTBALL_KEY")
+BASE_URL = "https://v3.football.api-sports.io"
+CHELSEA_ID = 49
+PREMIER_LEAGUE_ID = 39
+BLUECO_SEASONS = [2022, 2023, 2024]
 
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Referer": "https://www.google.com/",
-}
-
-TM_HEADERS = {
-    **HEADERS,
-    "Referer": "https://www.transfermarkt.com/",
+    "x-apisports-key": API_KEY
 }
 
 
-def _get(url: str, headers: dict, retries: int = 3, delay: float = 2.0) -> Optional[BeautifulSoup]:
-    """GET a page with retries and random delay. Returns BeautifulSoup or None."""
-    for attempt in range(retries):
-        try:
-            _sleep(delay)
-            response = requests.get(url, headers=headers, timeout=15)
-            response.raise_for_status()
-            return BeautifulSoup(response.text, "html.parser")
-        except requests.RequestException as e:
-            wait = delay * (2 ** attempt) + random.uniform(0, 1)
-            logger.warning(f"Attempt {attempt + 1} failed for {url}: {e}. Retrying in {wait:.1f}s")
-            time.sleep(wait)
-    logger.error(f"All {retries} attempts failed for {url}")
-    return None
+def _get(endpoint: str, params: dict) -> dict:
+    """Make a GET request to API-Football. Returns parsed JSON or empty dict."""
+    try:
+        response = requests.get(
+            f"{BASE_URL}/{endpoint}",
+            headers=HEADERS,
+            params=params,
+            timeout=15
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        remaining = response.headers.get("x-ratelimit-requests-remaining", "?")
+        logger.info(f"API requests remaining today: {remaining}")
+
+        return data
+    except requests.RequestException as e:
+        logger.error(f"API request failed for {endpoint}: {e}")
+        return {}
 
 
-def _sleep(base: float = 2.0):
-    """Random delay to avoid rate limiting."""
-    time.sleep(base + random.uniform(0.5, 2.0))
+# ---------------------------------------------------------------------------
+# Transfers scraper
+# ---------------------------------------------------------------------------
 
-
-# Transfermarkt scraper
-
-# Chelsea's BlueCo-era squad page on Transfermarkt
-CHELSEA_SQUAD_URL = "https://www.transfermarkt.com/fc-chelsea/kader/verein/631/saison_id/2024"
-
-# Known Transfermarkt player IDs for BlueCo signings
-# Format: "Player Name": "transfermarkt_id"
-PLAYER_TM_IDS = {
-    "Enzo Fernandez": "580195",
-    "Moises Caicedo": "572479",
-    "Nicolas Jackson": "768177",
-    "Romeo Lavia": "826367",
-    "Christopher Nkunku": "339018",
-    "Mykhailo Mudryk": "660226",
-    "Noni Madueke": "572479",
-    "Malo Gusto": "658614",
-    "Benoit Badiashile": "494762",
-    "Levi Colwill": "768204",
-    "Joao Felix": "461850",
-    "Wesley Fofana": "548256",
-    "Marc Cucurella": "339556",
-    "Axel Disasi": "374396",
-    "Cole Palmer": "700826",
-    "Kiernan Dewsbury-Hall": "493946",
-    "Tosin Adarabioyo": "339894",
-    "Pedro Neto": "451911",
-    "Jadon Sancho": "401173",
-    "Filip Jorgensen": "700307",
-}
-
-TM_PLAYER_BASE = "https://www.transfermarkt.com/x/marktwertverlauf/spieler/{tm_id}"
-
-
-def scrape_transfermarkt():
+def scrape_transfers():
     """
-    Pull current market values for all players from Transfermarkt.
-    Updates market_values table and player status.
+    Pull Chelsea's full transfer history from API-Football and upsert into DB.
+    Covers all BlueCo era seasons (2022-present).
     """
-    logger.info("Starting Transfermarkt scrape...")
-    players = get_all_players()
+    logger.info("Starting transfers scrape...")
     success_count = 0
     fail_count = 0
 
-    for player in players:
-        name = player["name"]
-        tm_id = PLAYER_TM_IDS.get(name)
+    data = _get("transfers", {"team": CHELSEA_ID})
 
-        if not tm_id:
-            logger.warning(f"No Transfermarkt ID for {name} — skipping")
+    if not data.get("response"):
+        logger.error("No transfer data returned from API")
+        log_scrape("transfers", "failed", "Empty response")
+        return
+
+    transfers = data["response"]
+    logger.info(f"Found {len(transfers)} transfer records")
+
+    for record in transfers:
+        player_info = record.get("player", {})
+        name = player_info.get("name")
+
+        if not name:
             continue
 
-        url = f"https://www.transfermarkt.com/x/profil/spieler/{tm_id}"
-        soup = _get(url, TM_HEADERS)
+        for transfer in record.get("transfers", []):
+            date_str = transfer.get("date", "")
+            if not date_str:
+                continue
 
-        if not soup:
-            fail_count += 1
-            continue
+            # Only process BlueCo era transfers (2022 onwards)
+            try:
+                year = int(date_str[:4])
+                if year < 2022:
+                    continue
+            except (ValueError, TypeError):
+                continue
 
-        market_value = _parse_tm_market_value(soup)
+            teams = transfer.get("teams", {})
+            team_in = teams.get("in", {}).get("name", "")
+            team_out = teams.get("out", {}).get("name", "")
+            transfer_type = transfer.get("type", "N/A")
 
-        if market_value is not None:
-            insert_market_value(player["id"], market_value)
-            logger.info(f"  ✓ {name}: £{market_value}m")
-            success_count += 1
-        else:
-            logger.warning(f"  ✗ {name}: could not parse market value")
-            fail_count += 1
+            is_incoming = "Chelsea" in team_in
+            is_outgoing = "Chelsea" in team_out
+
+            if not is_incoming and not is_outgoing:
+                continue
+
+            # Skip loan moves — we only want permanent transfers
+            if transfer_type and transfer_type.lower() in ("loan", "n/a"):
+                continue
+
+            # For incoming transfers, must be after July 2022 (BlueCo takeover)
+            try:
+                year = int(date_str[:4])
+                month = int(date_str[5:7])
+                is_post_blueco = (year > 2022) or (year == 2022 and month >= 5)
+            except (ValueError, TypeError):
+                continue
+
+            if is_incoming and not is_post_blueco:
+                continue
+
+            fee = _parse_fee(transfer_type)
+            season = _date_to_season(date_str)
+            status = "sold" if is_outgoing and not is_incoming else "active"
+
+            player_data = {
+                "name": name,
+                "position": "Unknown",
+                "fee_million": fee if is_incoming else 0.0,
+                "sale_fee_million": fee if is_outgoing else None,
+                "season": season,
+                "status": status,
+            }
+
+            try:
+                upsert_player(player_data)
+                success_count += 1
+                logger.info(f"  ✓ {name} ({team_out} → {team_in}) £{fee}m")
+            except Exception as e:
+                logger.error(f"  ✗ Failed to upsert {name}: {e}")
+                fail_count += 1
 
     message = f"Success: {success_count}, Failed: {fail_count}"
-    log_scrape("transfermarkt", "success" if fail_count == 0 else "partial", message)
-    logger.info(f"Transfermarkt scrape complete. {message}")
+    log_scrape("transfers", "success" if fail_count == 0 else "partial", message)
+    logger.info(f"Transfers scrape complete. {message}")
 
 
-def _parse_tm_market_value(soup: BeautifulSoup) -> Optional[float]:
+def _parse_fee(transfer_type: str) -> float:
     """
-    Extract current market value from a Transfermarkt player profile page.
-    Values are in format like '£85.00m' or '£500k'.
+    Parse fee strings like '€45M', '£32M', 'Free', 'Loan', 'N/A' into float millions.
     """
+    if not transfer_type or transfer_type in ("N/A", "Free", "Loan", "free", "loan"):
+        return 0.0
     try:
-        # Transfermarkt stores market value in this element
-        value_elem = soup.find("a", {"class": "data-header__market-value-wrapper"})
-        if not value_elem:
-            # Fallback selector
-            value_elem = soup.find("div", {"class": "tm-player-market-value-development__current-value"})
-
-        if not value_elem:
-            return None
-
-        raw = value_elem.get_text(strip=True)
-        return _parse_value_string(raw)
-    except Exception as e:
-        logger.error(f"Error parsing market value: {e}")
-        return None
-
-
-def _parse_value_string(raw: str) -> Optional[float]:
-    """
-    Convert strings like '£85.00m', '£500k', '€72m' to float millions.
-    """
-    try:
-        raw = raw.replace("£", "").replace("€", "").replace(",", "").strip()
-        if "m" in raw.lower():
-            return float(raw.lower().replace("m", "").strip())
-        elif "k" in raw.lower():
-            return round(float(raw.lower().replace("k", "").strip()) / 1000, 2)
+        raw = transfer_type.replace("€", "").replace("£", "").replace(",", "").strip()
+        if "M" in raw or "m" in raw:
+            return float(raw.upper().replace("M", "").strip())
+        elif "K" in raw or "k" in raw:
+            return round(float(raw.upper().replace("K", "").strip()) / 1000, 2)
         else:
             return float(raw)
     except (ValueError, AttributeError):
-        return None
+        return 0.0
 
 
-# FBref scraper
+def _date_to_season(date_str: str) -> str:
+    """Convert a date string like '2023-08-14' to '2023-24'."""
+    try:
+        year = int(date_str[:4])
+        month = int(date_str[5:7])
+        if month >= 7:
+            return f"{year}-{str(year + 1)[-2:]}"
+        else:
+            return f"{year - 1}-{str(year)[-2:]}"
+    except (ValueError, TypeError):
+        return "unknown"
 
-# FBref Chelsea squad stats page (2024-25 Premier League)
-FBREF_CHELSEA_URL = "https://fbref.com/en/squads/cff3d9bb/2024-2025/Chelsea-Stats"
 
-# Standard stats table on FBref squad pages
-FBREF_STATS_TABLE_ID = "stats_standard_9"
+# ---------------------------------------------------------------------------
+# Performance stats scraper
+# ---------------------------------------------------------------------------
 
-
-def scrape_fbref():
+def scrape_performance():
     """
-    Pull current season performance stats for all Chelsea players from FBref.
-    Updates the performance table.
+    Pull season stats for all Chelsea players across BlueCo seasons.
+    Updates minutes, goals, assists in the performance table.
+    Note: xG/xA not available on free tier — kept from seeded data.
     """
-    logger.info("Starting FBref scrape...")
-
-    soup = _get(FBREF_CHELSEA_URL, HEADERS, delay=3.0)
-    if not soup:
-        log_scrape("fbref", "failed", "Could not fetch FBref squad page")
-        return
-
-    stats = _parse_fbref_stats_table(soup)
-
-    if not stats:
-        log_scrape("fbref", "failed", "Could not parse stats table")
-        return
+    logger.info("Starting performance scrape...")
+    success_count = 0
+    fail_count = 0
 
     players = get_all_players()
     player_map = {p["name"].lower(): p for p in players}
 
-    success_count = 0
-    fail_count = 0
-    current_season = "2024-25"
+    for season in BLUECO_SEASONS:
+        logger.info(f"Fetching stats for {season}/{season+1} season...")
 
-    for fbref_name, stat_row in stats.items():
-        # Try to match FBref name to our player records
-        matched_player = _match_player_name(fbref_name, player_map)
+        data = _get("players", {
+            "team": CHELSEA_ID,
+            "season": season,
+            "league": PREMIER_LEAGUE_ID
+        })
 
-        if not matched_player:
-            logger.warning(f"  No match found for FBref player: {fbref_name}")
-            fail_count += 1
+        if not data.get("response"):
+            logger.warning(f"No player data for season {season}")
             continue
 
-        upsert_performance(matched_player["id"], current_season, stat_row)
-        logger.info(f"  ✓ {matched_player['name']}: {stat_row['minutes_played']} mins, "
-                    f"{stat_row['goals']}g {stat_row['assists']}a")
-        success_count += 1
+        total_pages = data.get("paging", {}).get("total", 1)
 
-    message = f"Success: {success_count}, Failed/unmatched: {fail_count}"
-    log_scrape("fbref", "success" if fail_count == 0 else "partial", message)
-    logger.info(f"FBref scrape complete. {message}")
+        for page in range(1, total_pages + 1):
+            if page > 1:
+                data = _get("players", {
+                    "team": CHELSEA_ID,
+                    "season": season,
+                    "league": PREMIER_LEAGUE_ID,
+                    "page": page
+                })
+
+            for entry in data.get("response", []):
+                player_info = entry.get("player", {})
+                name = player_info.get("name", "")
+                stats_list = entry.get("statistics", [])
+
+                if not stats_list:
+                    continue
+
+                stats = stats_list[0]
+                games = stats.get("games", {})
+                goals = stats.get("goals", {})
+
+                minutes = games.get("minutes") or 0
+                goals_scored = goals.get("total") or 0
+                assists = goals.get("assists") or 0
+                position = games.get("position", "Unknown")
+
+                season_str = f"{season}-{str(season + 1)[-2:]}"
+
+                matched = _match_name(name, player_map)
+                if not matched:
+                    logger.warning(f"  No match for {name}")
+                    fail_count += 1
+                    continue
+
+                if position and matched.get("position") == "Unknown":
+                    upsert_player({**matched, "position": position})
+
+                upsert_performance(matched["id"], season_str, {
+                    "minutes_played": minutes,
+                    "goals": goals_scored,
+                    "assists": assists,
+                    "xg": matched.get("xg") or 0,
+                    "xa": matched.get("xa") or 0,
+                    "progressive_carries": matched.get("progressive_carries") or 0,
+                    "progressive_passes": matched.get("progressive_passes") or 0,
+                })
+
+                logger.info(f"  ✓ {name} ({season_str}): {minutes}m {goals_scored}g {assists}a")
+                success_count += 1
+
+    message = f"Success: {success_count}, Unmatched: {fail_count}"
+    log_scrape("performance", "success" if fail_count == 0 else "partial", message)
+    logger.info(f"Performance scrape complete. {message}")
 
 
-def _parse_fbref_stats_table(soup: BeautifulSoup) -> dict:
+def _match_name(api_name: str, player_map: dict):
     """
-    Parse the standard stats table from FBref squad page.
-    Returns dict keyed by player name.
+    Match API player name to database record.
+    Strategy:
+    1. Exact match
+    2. Last name match — only if unambiguous (exactly one player in DB shares it)
     """
-    stats = {}
+    api_lower = api_name.lower().strip()
 
-    table = soup.find("table", {"id": FBREF_STATS_TABLE_ID})
-    if not table:
-        # FBref sometimes wraps tables in a div with a comment — try alternate
-        logger.warning("Standard stats table not found by ID, trying alternate selector")
-        table = soup.find("table", {"class": "stats_table"})
+    # 1. Exact match
+    if api_lower in player_map:
+        return player_map[api_lower]
 
-    if not table:
-        logger.error("Could not find stats table on FBref page")
-        return stats
+    # 2. Last name match — take the last word as the surname
+    api_last = api_lower.split()[-1] if api_lower.split() else ""
+    if not api_last:
+        return None
 
-    tbody = table.find("tbody")
-    if not tbody:
-        return stats
+    matches = [
+        player for db_name, player in player_map.items()
+        if db_name.split()[-1] == api_last
+    ]
 
-    for row in tbody.find_all("tr"):
-        # Skip spacer rows
-        if row.get("class") and "spacer" in row.get("class"):
-            continue
-
-        cells = row.find_all(["td", "th"])
-        if not cells:
-            continue
-
-        try:
-            name_cell = row.find("td", {"data-stat": "player"})
-            if not name_cell:
-                continue
-
-            name = name_cell.get_text(strip=True)
-            if not name:
-                continue
-
-            def get_stat(stat_name, default=0):
-                cell = row.find("td", {"data-stat": stat_name})
-                if not cell:
-                    return default
-                val = cell.get_text(strip=True)
-                try:
-                    return float(val) if "." in val else int(val)
-                except (ValueError, TypeError):
-                    return default
-
-            stats[name] = {
-                "minutes_played": get_stat("minutes"),
-                "goals": get_stat("goals"),
-                "assists": get_stat("assists"),
-                "xg": get_stat("xg"),
-                "xa": get_stat("xg_assist"),
-                "progressive_carries": get_stat("progressive_carries"),
-                "progressive_passes": get_stat("progressive_passes"),
-            }
-
-        except Exception as e:
-            logger.error(f"Error parsing row: {e}")
-            continue
-
-    logger.info(f"Parsed {len(stats)} players from FBref table")
-    return stats
-
-
-def _match_player_name(fbref_name: str, player_map: dict) -> Optional[dict]:
-    """
-    Match an FBref player name to our database records.
-    FBref uses full names which may differ slightly from our records.
-    """
-    fbref_lower = fbref_name.lower().strip()
-
-    # Exact match first
-    if fbref_lower in player_map:
-        return player_map[fbref_lower]
-
-    # Partial match — check if any part of the FBref name matches
-    for db_name, player in player_map.items():
-        db_parts = set(db_name.split())
-        fbref_parts = set(fbref_lower.split())
-        # If last name matches, that's good enough
-        if db_parts & fbref_parts:
-            return player
+    # Only return a match if exactly one player shares that last name
+    if len(matches) == 1:
+        return matches[0]
 
     return None
 
 
 # ---------------------------------------------------------------------------
-# Run all scrapers
+# Entry point
 # ---------------------------------------------------------------------------
 
 def run_all_scrapers():
-    """Entry point called by the scheduler."""
+    """Called by the scheduler every Sunday at 3am."""
     logger.info(f"Running all scrapers at {datetime.now().isoformat()}")
     try:
-        scrape_transfermarkt()
+        scrape_transfers()
     except Exception as e:
-        logger.error(f"Transfermarkt scraper failed: {e}")
-        log_scrape("transfermarkt", "failed", str(e))
+        logger.error(f"Transfers scraper failed: {e}")
+        log_scrape("transfers", "failed", str(e))
 
     try:
-        scrape_fbref()
+        scrape_performance()
     except Exception as e:
-        logger.error(f"FBref scraper failed: {e}")
-        log_scrape("fbref", "failed", str(e))
+        logger.error(f"Performance scraper failed: {e}")
+        log_scrape("performance", "failed", str(e))
 
     logger.info("All scrapers finished.")
 

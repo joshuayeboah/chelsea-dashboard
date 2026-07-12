@@ -118,7 +118,7 @@ def get_transfers(
     max_fee: Optional[float] = Query(None),
 ):
    
-    players = get_players_with_all_filters(position_group, season, status, min_fee, max_fee)
+    players = players = get_players_with_filters(position_group, season, status, min_fee, max_fee)
     results = [compute_metrics(p) for p in players]
 
     return {"count": len(results), "transfers": results}
@@ -129,7 +129,7 @@ def get_summary():
     players = [compute_metrics(p) for p in get_all_players()]
 
     total_spend = sum(p["fee_million"] for p in players)
-    total_current_value = sum(p["market_value_now"] for p in players)
+    total_current_value = sum(p.get("market_value_now") or 0 for p in players)
     total_profit_loss = round(total_current_value - total_spend, 1)
 
     paid_signings = [p for p in players if p["fee_million"] > 0]
