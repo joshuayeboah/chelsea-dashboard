@@ -1,16 +1,10 @@
-"""
-scrapers.py — pulls live transfer and performance data from API-Football (api-sports.io)
-
-Free tier: 100 requests/day
-Chelsea team ID: 49
-Premier League ID: 39
-"""
-
 import os
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
 import requests
+import unicodedata
+
 
 from database import (
     get_all_players, upsert_player, upsert_performance,
@@ -54,10 +48,7 @@ def _get(endpoint: str, params: dict) -> dict:
         return {}
 
 
-# ---------------------------------------------------------------------------
 # Transfers scraper
-# ---------------------------------------------------------------------------
-
 def scrape_transfers():
     """
     Pull Chelsea's full transfer history from API-Football and upsert into DB.
@@ -112,7 +103,6 @@ def scrape_transfers():
             if transfer_type and transfer_type.lower() in ("loan", "n/a"):
                 continue
 
-            # For incoming transfers, must be after July 2022 (BlueCo takeover)
             try:
                 year = int(date_str[:4])
                 month = int(date_str[5:7])
@@ -168,7 +158,6 @@ def _parse_fee(transfer_type: str) -> float:
 
 
 def _date_to_season(date_str: str) -> str:
-    """Convert a date string like '2023-08-14' to '2023-24'."""
     try:
         year = int(date_str[:4])
         month = int(date_str[5:7])
@@ -180,15 +169,13 @@ def _date_to_season(date_str: str) -> str:
         return "unknown"
 
 
-# ---------------------------------------------------------------------------
 # Performance stats scraper
-# ---------------------------------------------------------------------------
 
 def scrape_performance():
     """
     Pull season stats for all Chelsea players across BlueCo seasons.
     Updates minutes, goals, assists in the performance table.
-    Note: xG/xA not available on free tier — kept from seeded data.
+    Note: xG/xA not available
     """
     logger.info("Starting performance scrape...")
     success_count = 0
@@ -246,8 +233,7 @@ def scrape_performance():
                     fail_count += 1
                     continue
 
-                if position and matched.get("position") == "Unknown":
-                    upsert_player({**matched, "position": position})
+                
 
                 upsert_performance(matched["id"], season_str, {
                     "minutes_played": minutes,
@@ -267,49 +253,41 @@ def scrape_performance():
     logger.info(f"Performance scrape complete. {message}")
 
 
+
+def _normalize(text: str) -> str:
+    """Lowercase, strip accents, remove punctuation."""
+    text = text.lower().strip()
+    text = unicodedata.normalize("NFD", text)
+    text = "".join(c for c in text if unicodedata.category(c) != "Mn")
+    return text
+
 def _match_name(api_name: str, player_map: dict):
-    """
-    Match API player name to database record.
-    Strategy:
-    1. Exact match
-    2. Last name match — only if unambiguous (exactly one player in DB shares it)
-    """
-    api_lower = api_name.lower().strip()
+    api_norm = _normalize(api_name)
+    
+    # Exact match after normalization
+    for db_name, player in player_map.items():
+        if _normalize(db_name) == api_norm:
+            return player
 
-    # 1. Exact match
-    if api_lower in player_map:
-        return player_map[api_lower]
-
-    # 2. Last name match — take the last word as the surname
-    api_last = api_lower.split()[-1] if api_lower.split() else ""
+    # Last name match — only if unambiguous
+    api_last = api_norm.split()[-1] if api_norm.split() else ""
     if not api_last:
         return None
 
     matches = [
         player for db_name, player in player_map.items()
-        if db_name.split()[-1] == api_last
+        if _normalize(db_name).split()[-1] == api_last
     ]
 
-    # Only return a match if exactly one player shares that last name
     if len(matches) == 1:
         return matches[0]
 
     return None
 
 
-# ---------------------------------------------------------------------------
 # Entry point
-# ---------------------------------------------------------------------------
-
 def run_all_scrapers():
-    """Called by the scheduler every Sunday at 3am."""
     logger.info(f"Running all scrapers at {datetime.now().isoformat()}")
-    try:
-        scrape_transfers()
-    except Exception as e:
-        logger.error(f"Transfers scraper failed: {e}")
-        log_scrape("transfers", "failed", str(e))
-
     try:
         scrape_performance()
     except Exception as e:

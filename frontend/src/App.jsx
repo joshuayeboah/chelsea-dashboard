@@ -94,7 +94,7 @@ export default function App() {
                   <StatCard
                     label="Total spend"
                     value={`£${totalSpend}m`}
-                    sub="Since Boehly takeover 2022"
+                    sub="Since BlueCo takeover 2022"
                     color="var(--chelsea-blue)"
                   />
                   <StatCard
