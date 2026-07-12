@@ -11,7 +11,7 @@ const SORT_OPTIONS = [
   { value: 'fee_million', label: 'Fee' },
   { value: 'cost_per_90', label: 'Cost/90' },
   { value: 'minutes_util', label: 'Utilisation' },
-  { value: 'xg_xa_per_90', label: 'xG+xA/90' },
+  // { value: 'xg_xa_per_90', label: 'xG+xA/90' },
   { value: 'value_score', label: 'Value score' },
   { value: 'profit_loss', label: 'Profit/loss' },
 ]
@@ -97,7 +97,7 @@ export default function PlayerTable({ data }) {
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr style={{ background: 'var(--surface-2)' }}>
-              {['Player', 'Pos', 'Season', 'Fee (£m)', 'Mins', 'Goals', 'Ast', 'xG+xA/90', 'Utilisation', 'Value score', 'Profit/loss'].map(h => (
+              {['Player', 'Pos', 'Season', 'Fee (£m)', 'Mins', 'Goals', 'Ast', 'Utilisation', 'Value score', 'Profit/loss'].map(h => (
                 <th key={h} style={{ padding: '8px 12px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', borderBottom: '1px solid var(--border)' }}>
                   {h}
                 </th>
@@ -137,7 +137,7 @@ export default function PlayerTable({ data }) {
                   <td style={{ padding: '9px 12px' }}>{p.minutes_played?.toLocaleString()}</td>
                   <td style={{ padding: '9px 12px' }}>{p.goals}</td>
                   <td style={{ padding: '9px 12px' }}>{p.assists}</td>
-                  <td style={{ padding: '9px 12px', fontWeight: 600 }}>{p.xg_xa_per_90}</td>
+                  {/* <td style={{ padding: '9px 12px', fontWeight: 600 }}>{p.xg_xa_per_90}</td> */}
                   <td style={{ padding: '9px 12px', minWidth: 120 }}><UtilBar value={p.minutes_util} /></td>
                   <td style={{ padding: '9px 12px' }}><ValueBadge score={p.value_score} /></td>
                   <td style={{ padding: '9px 12px', fontWeight: 600, color: pl >= 0 ? '#1d7a46' : '#c0392b' }}>

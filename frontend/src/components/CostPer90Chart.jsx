@@ -36,7 +36,7 @@ export default function CostPer90Chart({ data }) {
   const sorted = [...data]
     .filter(d => d.cost_per_90 !== null && d.fee_million > 0 && d.minutes_played > 0)
     .sort((a, b) => b.cost_per_90 - a.cost_per_90)
-    .slice(0, 15)
+    .slice(0, 20)
 
   const getColor = (val) => {
     if (val > 2) return '#c0392b'
@@ -61,7 +61,7 @@ export default function CostPer90Chart({ data }) {
         </p>
       </div>
 
-      <ResponsiveContainer width="100%" height={340}>
+      <ResponsiveContainer width="100%" height={480}>
         <BarChart
           data={sorted}
           layout="vertical"

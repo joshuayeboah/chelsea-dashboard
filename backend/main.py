@@ -69,8 +69,7 @@ def compute_metrics(player: dict) -> dict:
     # Minutes utilisation: % of possible minutes played (rough 3800 per full season)
     seasons_at_club = max(1, _seasons_active(player["season"]))
     available_minutes = seasons_at_club * 3800
-    minutes_util = round((minutes / available_minutes) * 100, 1)
-
+    minutes_util = min(round((minutes / available_minutes) * 100, 1), 100.0)
     # Injury flag: less than 40% utilisation
     injury_flag = minutes_util < 40
 

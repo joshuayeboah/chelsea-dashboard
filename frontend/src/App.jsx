@@ -9,6 +9,16 @@ import FilterBar from './components/FilterBar'
 
 const TABS = ['Overview', 'Quadrant analysis', 'Cost efficiency', 'All signings']
 
+function formatMoney(millions) {
+  if (millions === null || millions === undefined) return '—'
+  const abs = Math.abs(millions)
+  const sign = millions < 0 ? '-' : ''
+  if (abs >= 1000) {
+    return `${sign}£${(abs / 1000).toFixed(1)}b`
+  }
+  return `${sign}£${Math.round(abs)}m`
+}
+
 function LoadingSpinner() {
   return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200, color: 'var(--text-muted)', fontSize: 14 }}>
@@ -93,19 +103,19 @@ export default function App() {
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
                   <StatCard
                     label="Total spend"
-                    value={`£${totalSpend}m`}
+                    value={formatMoney(totalSpend)}
                     sub="Since BlueCo takeover 2022"
                     color="var(--chelsea-blue)"
                   />
                   <StatCard
                     label="Current squad value"
-                    value={`£${totalValue}m`}
+                    value={formatMoney(totalValue)}
                     sub="Combined market value"
                     color="var(--chelsea-blue)"
                   />
                   <StatCard
                     label="Net value change"
-                    value={`${profitLoss >= 0 ? '+' : ''}£${profitLoss}m`}
+                    value={formatMoney(profitLoss)}
                     sub="vs fees paid"
                     color={profitLoss >= 0 ? 'var(--green)' : 'var(--red)'}
                   />
@@ -123,7 +133,7 @@ export default function App() {
                   />
                   <StatCard
                     label="Avg cost per 90"
-                    value={summary?.avg_cost_per_90_thousand ? `£${summary.avg_cost_per_90_thousand}k` : '—'}
+                    value={summary?.avg_cost_per_90_thousand ? formatMoney(summary.avg_cost_per_90_thousand / 1000) : '—'}
                     sub="Among paid signings"
                     color="var(--amber)"
                   />
@@ -143,7 +153,7 @@ export default function App() {
                       <div key={group} style={{ marginBottom: 12 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4, fontSize: 13 }}>
                           <span style={{ fontWeight: 600 }}>{group}</span>
-                          <span style={{ color: 'var(--text-secondary)' }}>£{d.total_spend}m · {d.count} players</span>
+                          <span style={{ color: 'var(--text-secondary)' }}>{formatMoney(d.total_spend)} · {d.count} players</span>
                         </div>
                         <div style={{ height: 8, background: 'var(--surface-2)', borderRadius: 4, overflow: 'hidden' }}>
                           <div style={{
@@ -192,6 +202,15 @@ export default function App() {
           </div>
         )}
       </main>
+      <footer style={{
+  borderTop: '1px solid var(--border)',
+  padding: '12px 24px',
+  textAlign: 'center',
+  fontSize: 11,
+  color: 'var(--text-muted)',
+}}>
+  Performance stats via API-Football · 2025-26 season data updates weekly · Historical stats reflect Premier League appearances only · Transfer fees sourced from public records
+</footer>
     </div>
   )
 }

@@ -20,7 +20,7 @@ API_KEY = os.getenv("API_FOOTBALL_KEY")
 BASE_URL = "https://v3.football.api-sports.io"
 CHELSEA_ID = 49
 PREMIER_LEAGUE_ID = 39
-BLUECO_SEASONS = [2022, 2023, 2024]
+BLUECO_SEASONS = [2022, 2023, 2024, 2025]
 
 HEADERS = {
     "x-apisports-key": API_KEY
@@ -261,7 +261,52 @@ def _normalize(text: str) -> str:
     text = "".join(c for c in text if unicodedata.category(c) != "Mn")
     return text
 
+
+NAME_OVERRIDES = {
+    "w. fofana": "Wesley Fofana",
+    "d. fofana": "David Datro Fofana",
+    "ângelo": "Angelo Gabriel",
+    "angelo": "Angelo Gabriel",
+    "joão félix": "Joao Felix",
+    "joão pedro": "Joao Pedro",
+    "đ. petrović": "Djordje Petrovic",
+    "robert sánchez": "Robert Sanchez",
+    "e. fernández": "Enzo Fernandez",
+    "f. jörgensen": "Filip Jorgensen",
+    "p. aubameyang": "Pierre-Emerick Aubameyang",
+    "k. koulibaly": "Kalidou Koulibaly",
+    "r. sterling": "Raheem Sterling",
+    "m. caicedo": "Moises Caicedo",
+    "r. lavia": "Romeo Lavia",
+    "m. mudryk": "Mykhailo Mudryk",
+    "c. palmer": "Cole Palmer",
+    "n. jackson": "Nicolas Jackson",
+    "m. gusto": "Malo Gusto",
+    "l. colwill": "Levi Colwill",
+    "b. badiashile": "Benoit Badiashile",
+    "t. adarabioyo": "Tosin Adarabioyo",
+    "n. madueke": "Noni Madueke",
+    "c. nkunku": "Christopher Nkunku",
+    "a. garnacho": "Alejandro Garnacho",
+    "l. ugochukwu": "Lesley Ugochukwu",
+    "k. dewsbury-hall": "Kiernan Dewsbury-Hall",
+    "c. chukwuemeka": "Carney Chukwuemeka",
+    "i. maatsen": "Ian Maatsen",
+    "m. sarr": "Mamadou Sarr",
+    "pedro neto": "Pedro Neto",
+    "renato veiga": "Renato Veiga",
+    "andrey santos": "Andrey Santos",
+    "deivid washington": "Deivid Washington",
+}
+
 def _match_name(api_name: str, player_map: dict):
+    api_lower = api_name.lower().strip()
+    
+    # Manual overrides for ambiguous or differently formatted names
+    if api_lower in NAME_OVERRIDES:
+        target = NAME_OVERRIDES[api_lower].lower()
+        return player_map.get(target)
+    
     api_norm = _normalize(api_name)
     
     # Exact match after normalization
