@@ -28,7 +28,7 @@ app = FastAPI(title="Chelsea Transfer Dashboard API", version="2.0.0", lifespan 
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://yellow-beach-0696c640f.7.azurestaticapps.net"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "https://brave-coast-0e982570f.7.azurestaticapps.net"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
