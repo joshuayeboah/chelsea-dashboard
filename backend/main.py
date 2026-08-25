@@ -5,8 +5,7 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from database import init_db, get_players_with_filters, get_all_players
 from scrapers import run_all_scrapers
-
-
+from seed import seed
 
 
 
@@ -19,6 +18,9 @@ scheduler.add_job(run_all_scrapers, "cron", day_of_week='sun', hour=3, minute=0)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    if not get_all_players():
+        seed()
+        run_all_scrapers()
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -62,9 +64,11 @@ def compute_metrics(player: dict) -> dict:
     xg_xa_per_90 = round(xg_xa / nineties, 2) if nineties > 0 else 0
 
     # Value score: market_value / fee (>1 = appreciated, <1 = depreciated)
-
-    market_value = player.get('market_value_now') or 0
-    value_score = round(market_value / fee, 2) if fee > 0 else None
+    # market_value_now is None when we simply don't have a market value on file
+    # (distinct from a genuine known value of 0) — don't let that read as a loss.
+    market_value = player.get('market_value_now')
+    has_market_value = market_value is not None
+    value_score = round(market_value / fee, 2) if (fee > 0 and has_market_value) else None
 
     # Minutes utilisation: % of possible minutes played (rough 3800 per full season)
     seasons_at_club = max(1, _seasons_active(player["season"]))
@@ -76,8 +80,10 @@ def compute_metrics(player: dict) -> dict:
     sale_fee = player.get('sale_fee_million')
     if sale_fee is not None:
         profit_loss = round(sale_fee - fee, 1)
-    else:
+    elif has_market_value:
         profit_loss = round(market_value - fee, 1)
+    else:
+        profit_loss = None
 
     return {
         **player,
@@ -128,8 +134,9 @@ def get_summary():
     players = [compute_metrics(p) for p in get_all_players()]
 
     total_spend = sum(p["fee_million"] for p in players)
-    total_current_value = sum(p.get("market_value_now") or 0 for p in players)
-    total_profit_loss = round(total_current_value - total_spend, 1)
+    known_values = [p["market_value_now"] for p in players if p.get("market_value_now") is not None]
+    total_current_value = round(sum(known_values), 1) if known_values else None
+    total_profit_loss = round(total_current_value - total_spend, 1) if total_current_value is not None else None
 
     paid_signings = [p for p in players if p["fee_million"] > 0]
     avg_cost_per_90 = None
@@ -161,7 +168,7 @@ def get_summary():
 
     return {
         "total_spend_million": round(total_spend, 1),
-        "total_current_value_million": round(total_current_value, 1),
+        "total_current_value_million": total_current_value,
         "total_profit_loss_million": total_profit_loss,
         "avg_cost_per_90_thousand": round(avg_cost_per_90 * 1000, 1) if avg_cost_per_90 else None,
         "injured_underutilised_count": injured_count,

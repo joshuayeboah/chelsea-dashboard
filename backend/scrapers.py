@@ -19,7 +19,7 @@ API_KEY = os.getenv("API_FOOTBALL_KEY")
 BASE_URL = "https://v3.football.api-sports.io"
 CHELSEA_ID = 49
 PREMIER_LEAGUE_ID = 39
-BLUECO_SEASONS = [2022, 2023, 2024, 2025]
+BLUECO_SEASONS = [2022, 2023, 2024, 2025, 2026]
 
 HEADERS = {"x-apisports-key": API_KEY}
 
@@ -57,6 +57,7 @@ NAME_OVERRIDES = {
     "renato veiga": "Renato Veiga",
     "andrey santos": "Andrey Santos",
     "deivid washington": "Deivid Washington",
+    "estevao": "Estevao Willian",
 }
 
 
@@ -154,10 +155,21 @@ def scrape_performance():
                 stats = stats_list[0]
                 games = stats.get("games", {})
                 goals = stats.get("goals", {})
+                shots = stats.get("shots", {})
+                passes = stats.get("passes", {})
+                dribbles = stats.get("dribbles", {})
+                cards = stats.get("cards", {})
 
                 minutes = games.get("minutes") or 0
                 goals_scored = goals.get("total") or 0
                 assists = goals.get("assists") or 0
+                shots_total = shots.get("total") or 0
+                shots_on = shots.get("on") or 0
+                key_passes = passes.get("key") or 0
+                dribbles_success = dribbles.get("success") or 0
+                yellow_cards = cards.get("yellow") or 0
+                red_cards = cards.get("red") or 0
+                rating = float(games.get("rating") or 0.0)
 
                 matched = _match_name(name, player_map)
                 if not matched:
@@ -179,6 +191,13 @@ def scrape_performance():
                     "xa": 0.0,
                     "progressive_carries": 0,
                     "progressive_passes": 0,
+                    "shots_total": shots_total,
+                    "shots_on": shots_on,
+                    "key_passes": key_passes,
+                    "dribbles_success": dribbles_success,
+                    "yellow_cards": yellow_cards,
+                    "red_cards": red_cards,
+                    "rating": rating,
                 })
 
                 logger.info(f"  ✓ {name} ({season_str}): {minutes}m {goals_scored}g {assists}a")
@@ -190,6 +209,12 @@ def scrape_performance():
 
 
 def run_all_scrapers():
+    """
+    Refresh performance stats for the current roster. The roster itself
+    (name, position, fee, nationality, age, market value) is hand-curated in
+    transfers.json and loaded via seed.py — see main.py's lifespan — since
+    API-Football doesn't reliably expose those fields for auto-discovery.
+    """
     logger.info(f"Running all scrapers at {datetime.now().isoformat()}")
     try:
         scrape_performance()

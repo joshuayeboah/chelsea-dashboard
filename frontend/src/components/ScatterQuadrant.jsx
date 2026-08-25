@@ -42,7 +42,7 @@ const CustomTooltip = ({ active, payload }) => {
         {/* <span style={{ color: 'var(--text-muted)' }}>xG+xA / 90</span> */}
         {/* <span style={{ fontWeight: 600 }}>{d.xg_xa_per_90}</span> */}
         <span style={{ color: 'var(--text-muted)' }}>Value now</span>
-        <span style={{ fontWeight: 600 }}>£{d.market_value_now}m</span>
+        <span style={{ fontWeight: 600 }}>{d.market_value_now != null ? `£${d.market_value_now}m` : '—'}</span>
       </div>
       <div style={{
         marginTop: 8,

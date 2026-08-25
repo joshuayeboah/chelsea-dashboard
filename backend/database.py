@@ -43,6 +43,13 @@ def init_db():
             xa                  REAL DEFAULT 0.0,
             progressive_carries INTEGER DEFAULT 0,
             progressive_passes  INTEGER DEFAULT 0,
+            shots_total         INTEGER DEFAULT 0,
+            shots_on            INTEGER DEFAULT 0,
+            key_passes          INTEGER DEFAULT 0,
+            dribbles_success    INTEGER DEFAULT 0,
+            yellow_cards        INTEGER DEFAULT 0,
+            red_cards           INTEGER DEFAULT 0,
+            rating              REAL DEFAULT 0.0,
             last_updated        TEXT,
             FOREIGN KEY (player_id) REFERENCES players(id),
             UNIQUE(player_id, season)
@@ -85,7 +92,14 @@ def get_all_players():
             COALESCE(SUM(perf.xg), 0.0) as xg,
             COALESCE(SUM(perf.xa), 0.0) as xa,
             COALESCE(SUM(perf.progressive_carries), 0) as progressive_carries,
-            COALESCE(SUM(perf.progressive_passes), 0) as progressive_passes
+            COALESCE(SUM(perf.progressive_passes), 0) as progressive_passes,
+            COALESCE(SUM(perf.shots_total), 0) as shots_total,
+            COALESCE(SUM(perf.shots_on), 0) as shots_on,
+            COALESCE(SUM(perf.key_passes), 0) as key_passes,
+            COALESCE(SUM(perf.dribbles_success), 0) as dribbles_success,
+            COALESCE(SUM(perf.yellow_cards), 0) as yellow_cards,
+            COALESCE(SUM(perf.red_cards), 0) as red_cards,
+            COALESCE(AVG(perf.rating), 0.0) as rating
         FROM players p
         LEFT JOIN (
             SELECT player_id, market_value
@@ -197,8 +211,10 @@ def upsert_performance(player_id: int, season: str, stats: dict):
     cursor.execute("""
         INSERT INTO performance
             (player_id, season, minutes_played, goals, assists, xg, xa,
-             progressive_carries, progressive_passes, last_updated)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+             progressive_carries, progressive_passes, shots_total, shots_on,
+             key_passes, dribbles_success, yellow_cards, red_cards, rating,
+             last_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
         ON CONFLICT(player_id, season) DO UPDATE SET
             minutes_played = excluded.minutes_played,
             goals = excluded.goals,
@@ -207,6 +223,13 @@ def upsert_performance(player_id: int, season: str, stats: dict):
             xa = excluded.xa,
             progressive_carries = excluded.progressive_carries,
             progressive_passes = excluded.progressive_passes,
+            shots_total = excluded.shots_total,
+            shots_on = excluded.shots_on,
+            key_passes = excluded.key_passes,
+            dribbles_success = excluded.dribbles_success,
+            yellow_cards = excluded.yellow_cards,
+            red_cards = excluded.red_cards,
+            rating = excluded.rating,
             last_updated = excluded.last_updated
     """, (
         player_id,
@@ -218,6 +241,13 @@ def upsert_performance(player_id: int, season: str, stats: dict):
         stats.get("xa", 0.0),
         stats.get("progressive_carries", 0),
         stats.get("progressive_passes", 0),
+        stats.get("shots_total", 0),
+        stats.get("shots_on", 0),
+        stats.get("key_passes", 0),
+        stats.get("dribbles_success", 0),
+        stats.get("yellow_cards", 0),
+        stats.get("red_cards", 0),
+        stats.get("rating", 0.0),
     ))
 
     conn.commit()

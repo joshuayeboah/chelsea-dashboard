@@ -16,8 +16,9 @@ const SORT_OPTIONS = [
   { value: 'profit_loss', label: 'Profit/loss' },
 ]
 
-function ValueBadge({ score }) {
-  if (score === null) return <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Free</span>
+function ValueBadge({ score, fee }) {
+  if (fee <= 0) return <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Free</span>
+  if (score === null || score === undefined) return <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>
   const color = score >= 1.2 ? '#1d7a46' : score >= 0.8 ? '#d97706' : '#c0392b'
   return (
     <span style={{
@@ -139,9 +140,9 @@ export default function PlayerTable({ data }) {
                   <td style={{ padding: '9px 12px' }}>{p.assists}</td>
                   {/* <td style={{ padding: '9px 12px', fontWeight: 600 }}>{p.xg_xa_per_90}</td> */}
                   <td style={{ padding: '9px 12px', minWidth: 120 }}><UtilBar value={p.minutes_util} /></td>
-                  <td style={{ padding: '9px 12px' }}><ValueBadge score={p.value_score} /></td>
-                  <td style={{ padding: '9px 12px', fontWeight: 600, color: pl >= 0 ? '#1d7a46' : '#c0392b' }}>
-                    {pl >= 0 ? '+' : ''}£{pl}m
+                  <td style={{ padding: '9px 12px' }}><ValueBadge score={p.value_score} fee={p.fee_million} /></td>
+                  <td style={{ padding: '9px 12px', fontWeight: 600, color: pl === null || pl === undefined ? 'var(--text-muted)' : pl >= 0 ? '#1d7a46' : '#c0392b' }}>
+                    {pl === null || pl === undefined ? '—' : `${pl >= 0 ? '+' : ''}£${pl}m`}
                   </td>
                 </tr>
               )

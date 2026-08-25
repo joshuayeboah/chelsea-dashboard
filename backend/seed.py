@@ -6,9 +6,6 @@ DATA_PATH = Path(__file__).parent / "transfers.json"
 
 
 def seed():
-    print("Initialising database...")
-    init_db()
-
     with open(DATA_PATH) as f:
         players = json.load(f)
 
@@ -48,4 +45,5 @@ def seed():
 
 
 if __name__ == "__main__":
+    init_db()
     seed()
