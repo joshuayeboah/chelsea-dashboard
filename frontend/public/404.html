@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Page not found — Chelsea Transfer Dashboard</title>
+    <style>
+      :root {
+        --chelsea-blue: #034694;
+        --chelsea-blue-light: #1a5fa8;
+        --chelsea-gold: #DBA111;
+        --bg: #f5f6fa;
+        --surface: #ffffff;
+        --text-primary: #0d1117;
+        --text-secondary: #5a6278;
+        --text-muted: #9aa0b4;
+        --border: #e2e6f0;
+        --radius: 10px;
+        --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.04);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: var(--bg);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: var(--text-primary);
+      }
+
+      .card {
+        width: 100%;
+        max-width: 480px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        padding: 40px 32px;
+        text-align: center;
+      }
+
+      .crest {
+        width: 56px;
+        height: 56px;
+        margin: 0 auto 20px;
+        border-radius: 50%;
+        background: var(--chelsea-blue);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--chelsea-gold);
+        letter-spacing: 0.5px;
+      }
+
+      .status {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--chelsea-blue-light);
+        margin: 0 0 8px;
+      }
+
+      h1 {
+        font-size: 22px;
+        margin: 0 0 12px;
+        color: var(--text-primary);
+      }
+
+      p {
+        font-size: 14px;
+        line-height: 1.6;
+        color: var(--text-secondary);
+        margin: 0 0 28px;
+      }
+
+      a.home {
+        display: inline-block;
+        padding: 11px 24px;
+        border-radius: var(--radius);
+        background: var(--chelsea-blue);
+        color: #fff;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 600;
+        transition: background 0.15s ease;
+      }
+
+      a.home:hover {
+        background: var(--chelsea-blue-light);
+      }
+
+      .footnote {
+        margin-top: 20px;
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <div class="crest">CFC</div>
+      <p class="status">404 · Not Found</p>
+      <h1>This signing fell through.</h1>
+      <p>The page you're after isn't in the squad. It may have been sold, loaned out, or never actually existed.</p>
+      <a class="home" href="/">Back to the dashboard</a>
+      <div class="footnote">CFC Pocket Watching</div>
+    </div>
+  </body>
+</html>
