@@ -18,14 +18,35 @@ logger = logging.getLogger(__name__)
 API_KEY = os.getenv("API_FOOTBALL_KEY")
 BASE_URL = "https://v3.football.api-sports.io"
 CHELSEA_ID = 49
-PREMIER_LEAGUE_ID = 39
 BLUECO_SEASONS = [2022, 2023, 2024, 2025, 2026]
+
+# Chelsea's full competition list — every competitive fixture type the club
+# plays, so a player's minutes/goals/assists reflect the whole season, not
+# just the Premier League. Deliberately excludes preseason exhibitions
+# (International Champions Cup, Premier League Summer Series) which aren't
+# meaningful performance data. Also excludes "Friendlies Clubs" (667): for
+# the 2025 Club World Cup, API-Football's player-statistics endpoint reports
+# the exact same appearances/minutes/goals under both league 15 (FIFA Club
+# World Cup) and league 667, even though /fixtures shows them as distinct
+# matches — including both would double-count those games.
+COMPETITION_IDS = {
+    39,   # Premier League
+    45,   # FA Cup
+    48,   # League Cup
+    2,    # UEFA Champions League
+    3,    # UEFA Europa League
+    848,  # UEFA Europa Conference League
+    15,   # FIFA Club World Cup
+    528,  # Community Shield
+    531,  # UEFA Super Cup
+}
 
 HEADERS = {"x-apisports-key": API_KEY}
 
 NAME_OVERRIDES = {
     "w. fofana": "Wesley Fofana",
     "d. fofana": "David Datro Fofana",
+    "j. bynoe-gittens": "Jamie Gittens",
     "angelo": "Angelo Gabriel",
     "joao felix": "Joao Felix",
     "joao pedro": "Joao Pedro",
@@ -115,6 +136,8 @@ def scrape_performance():
     success_count = 0
     fail_count = 0
     skipped_count = 0
+    empty_seasons = 0
+    api_errors = set()
 
     players = get_all_players()
     player_map = {_normalize(p["name"]): p for p in players}
@@ -123,14 +146,22 @@ def scrape_performance():
         logger.info(f"Fetching stats for {season}/{season+1} season...")
         season_str = f"{season}-{str(season + 1)[-2:]}"
 
+        # No `league` filter: the API then returns each player's full
+        # `statistics` list broken down per competition, which we sum
+        # ourselves below instead of only ever seeing the Premier League row.
         data = _get("players", {
             "team": CHELSEA_ID,
             "season": season,
-            "league": PREMIER_LEAGUE_ID
         })
 
         if not data.get("response"):
             logger.warning(f"No player data for season {season}")
+            empty_seasons += 1
+            errors = data.get("errors")
+            if errors:
+                # errors can be a dict ({"access": "..."}) or a list depending on endpoint
+                values = errors.values() if isinstance(errors, dict) else errors
+                api_errors.update(str(v) for v in values)
             continue
 
         total_pages = data.get("paging", {}).get("total", 1)
@@ -140,7 +171,6 @@ def scrape_performance():
                 data = _get("players", {
                     "team": CHELSEA_ID,
                     "season": season,
-                    "league": PREMIER_LEAGUE_ID,
                     "page": page
                 })
 
@@ -149,27 +179,49 @@ def scrape_performance():
                 name = player_info.get("name", "")
                 stats_list = entry.get("statistics", [])
 
-                if not stats_list:
+                # Keep only the competitions in our list, dropping anything
+                # else the API returns (e.g. preseason exhibitions).
+                relevant = [
+                    s for s in stats_list
+                    if s.get("league", {}).get("id") in COMPETITION_IDS
+                ]
+                if not relevant:
                     continue
 
-                stats = stats_list[0]
-                games = stats.get("games", {})
-                goals = stats.get("goals", {})
-                shots = stats.get("shots", {})
-                passes = stats.get("passes", {})
-                dribbles = stats.get("dribbles", {})
-                cards = stats.get("cards", {})
+                minutes = 0
+                goals_scored = 0
+                assists = 0
+                shots_total = 0
+                shots_on = 0
+                key_passes = 0
+                dribbles_success = 0
+                yellow_cards = 0
+                red_cards = 0
+                rating_weighted_sum = 0.0
 
-                minutes = games.get("minutes") or 0
-                goals_scored = goals.get("total") or 0
-                assists = goals.get("assists") or 0
-                shots_total = shots.get("total") or 0
-                shots_on = shots.get("on") or 0
-                key_passes = passes.get("key") or 0
-                dribbles_success = dribbles.get("success") or 0
-                yellow_cards = cards.get("yellow") or 0
-                red_cards = cards.get("red") or 0
-                rating = float(games.get("rating") or 0.0)
+                for stats in relevant:
+                    games = stats.get("games", {})
+                    goals = stats.get("goals", {})
+                    shots = stats.get("shots", {})
+                    passes = stats.get("passes", {})
+                    dribbles = stats.get("dribbles", {})
+                    cards = stats.get("cards", {})
+
+                    comp_minutes = games.get("minutes") or 0
+                    minutes += comp_minutes
+                    goals_scored += goals.get("total") or 0
+                    assists += goals.get("assists") or 0
+                    shots_total += shots.get("total") or 0
+                    shots_on += shots.get("on") or 0
+                    key_passes += passes.get("key") or 0
+                    dribbles_success += dribbles.get("success") or 0
+                    yellow_cards += cards.get("yellow") or 0
+                    red_cards += cards.get("red") or 0
+                    rating_weighted_sum += float(games.get("rating") or 0.0) * comp_minutes
+
+                # Rating isn't additive across competitions — use a
+                # minutes-weighted average instead of a raw sum.
+                rating = (rating_weighted_sum / minutes) if minutes else 0.0
 
                 matched = _match_name(name, player_map)
                 if not matched:
@@ -203,8 +255,22 @@ def scrape_performance():
                 logger.info(f"  ✓ {name} ({season_str}): {minutes}m {goals_scored}g {assists}a")
                 success_count += 1
 
-    message = f"Success: {success_count}, Skipped (pre-signing): {skipped_count}, Unmatched: {fail_count}"
-    log_scrape("performance", "success" if fail_count == 0 else "partial", message)
+    processed = success_count + fail_count + skipped_count
+
+    if processed == 0 and empty_seasons == len(BLUECO_SEASONS):
+        # The API gave back nothing for every season we asked about — that's
+        # an upstream failure (bad/suspended key, outage, plan limits), not a
+        # quiet no-op. Surface it as "failed" rather than a false "success".
+        detail = "; ".join(sorted(api_errors)) if api_errors else "no data returned for any season"
+        message = f"API returned no data — {detail}"
+        log_scrape("performance", "failed", message)
+    else:
+        status = "success" if fail_count == 0 and empty_seasons == 0 else "partial"
+        message = f"Success: {success_count}, Skipped (pre-signing): {skipped_count}, Unmatched: {fail_count}"
+        if empty_seasons:
+            message += f", Seasons with no data: {empty_seasons}"
+        log_scrape("performance", status, message)
+
     logger.info(f"Performance scrape complete. {message}")
 
 
