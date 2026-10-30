@@ -70,6 +70,17 @@ def init_db():
             message     TEXT,
             ran_at      TEXT DEFAULT (datetime('now'))
         );
+
+        -- Irrelevant at today's ~90-row scale, but this table grows with
+        -- Chelsea's transfer history, not with traffic, so it'll likely
+        -- never need these for size. Adding them now anyway: upsert_player
+        -- does a full-table scan by name on every seed/scrape run, and
+        -- market_values has no index backing its player_id join/group-by.
+        CREATE INDEX IF NOT EXISTS idx_players_name ON players(name);
+        CREATE INDEX IF NOT EXISTS idx_players_position ON players(position);
+        CREATE INDEX IF NOT EXISTS idx_players_season ON players(season);
+        CREATE INDEX IF NOT EXISTS idx_players_status ON players(status);
+        CREATE INDEX IF NOT EXISTS idx_market_values_player_id ON market_values(player_id);
     """)
 
     conn.commit()
