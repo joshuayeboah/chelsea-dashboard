@@ -8,6 +8,52 @@ on:
 jobs:
   trigger-scrape:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      API_BASE: https://chelsea-dashboard-api.onrender.com
     steps:
-      - name: Call /scrape endpoint
-        run: curl -f -X POST https://chelsea-dashboard-api.onrender.com/scrape
+      # /scrape runs the actual scrape as a background task and always
+      # responds 200 "started" immediately, regardless of whether the
+      # scrape itself goes on to succeed — so checking that response alone
+      # (the old behaviour here) can never detect a real failure. This is
+      # exactly the gap that let the API-Football suspension go unnoticed.
+      - name: Wake the instance and record the current scrape_log id
+        id: baseline
+        run: |
+          # Render's free tier spins down when idle, so the first request
+          # can take 30-60s to even respond — retry through the cold start.
+          response=$(curl -sS --retry 6 --retry-delay 10 --retry-all-errors "$API_BASE/scrape/status")
+          baseline_id=$(echo "$response" | python3 -c "import json,sys; logs=json.load(sys.stdin).get('logs',[]); print(logs[0]['id'] if logs else 0)")
+          echo "baseline_id=$baseline_id" >> "$GITHUB_OUTPUT"
+          echo "Current latest scrape_log id: $baseline_id"
+
+      - name: Trigger the scrape
+        run: curl -fsS -X POST "$API_BASE/scrape"
+
+      - name: Wait for it to finish, then verify it actually succeeded
+        run: |
+          baseline_id="${{ steps.baseline.outputs.baseline_id }}"
+          tries=30
+          sleep_s=10
+
+          for i in $(seq 1 "$tries"); do
+            response=$(curl -sS "$API_BASE/scrape/status")
+            latest_id=$(echo "$response" | python3 -c "import json,sys; logs=json.load(sys.stdin).get('logs',[]); print(logs[0]['id'] if logs else 0)")
+
+            if [ "$latest_id" != "$baseline_id" ]; then
+              scrape_status=$(echo "$response" | python3 -c "import json,sys; print(json.load(sys.stdin)['logs'][0]['status'])")
+              message=$(echo "$response" | python3 -c "import json,sys; print(json.load(sys.stdin)['logs'][0]['message'])")
+              echo "New scrape_log entry (id=$latest_id): $scrape_status — $message"
+
+              if [ "$scrape_status" = "failed" ]; then
+                echo "::error::Weekly scrape failed: $message"
+                exit 1
+              fi
+              exit 0
+            fi
+
+            sleep "$sleep_s"
+          done
+
+          echo "::error::Timed out waiting for the scrape to complete (no new scrape_log entry after $((tries * sleep_s))s)"
+          exit 1
