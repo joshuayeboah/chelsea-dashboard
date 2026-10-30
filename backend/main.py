@@ -1,29 +1,31 @@
-from fastapi import FastAPI, Query, BackgroundTasks
+from fastapi import FastAPI, Query, BackgroundTasks, Response
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from contextlib import asynccontextmanager
-from apscheduler.schedulers.background import BackgroundScheduler
 from database import init_db, get_players_with_filters, get_all_players
 from scrapers import run_all_scrapers
 from seed import seed
 
+# Pure-read endpoints whose underlying data only changes on a scrape or a
+# transfers.json reseed (infrequent) — safe to cache aggressively so a CDN
+# or browser can absorb most read traffic without ever reaching the backend.
+READ_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600"
 
 
-
-
-
-scheduler = BackgroundScheduler()
-scheduler.add_job(run_all_scrapers, "cron", day_of_week='sun', hour=3, minute=0)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # The recurring scrape is handled externally now (the weekly GitHub
+    # Actions workflow hits POST /scrape) rather than by an in-process
+    # scheduler. An in-process cron doesn't survive Render's free-tier
+    # spin-down anyway, and it actively breaks horizontal scaling — every
+    # instance behind a load balancer would run its own competing cron,
+    # multiplying API-Football calls and racing to write the same rows.
     init_db()
     if not get_all_players():
         seed()
         run_all_scrapers()
-    scheduler.start()
     yield
-    scheduler.shutdown()
 
 
 app = FastAPI(title="Chelsea Transfer Dashboard API", version="2.0.0", lifespan = lifespan)
@@ -116,21 +118,30 @@ def root():
 
 @app.get("/transfers")
 def get_transfers(
+    response: Response,
     position_group: Optional[str] = Query(None),
     season: Optional[str] = Query(None),
     status: Optional[str] = Query(None),
     min_fee: Optional[float] = Query(None),
     max_fee: Optional[float] = Query(None),
+    limit: Optional[int] = Query(None, ge=1, le=500, description="Page size. Omit to get every matching signing (current default behaviour, unchanged)."),
+    offset: int = Query(0, ge=0),
 ):
-   
-    players = players = get_players_with_filters(position_group, season, status, min_fee, max_fee)
-    results = [compute_metrics(p) for p in players]
+    response.headers["Cache-Control"] = READ_CACHE_CONTROL
 
-    return {"count": len(results), "transfers": results}
+    players = get_players_with_filters(position_group, season, status, min_fee, max_fee)
+    results = [compute_metrics(p) for p in players]
+    total = len(results)
+
+    if limit is not None:
+        results = results[offset:offset + limit]
+
+    return {"count": len(results), "total": total, "transfers": results}
 
 
 @app.get("/metrics/summary")
-def get_summary():
+def get_summary(response: Response):
+    response.headers["Cache-Control"] = READ_CACHE_CONTROL
     players = [compute_metrics(p) for p in get_all_players()]
 
     total_spend = sum(p["fee_million"] for p in players)
@@ -179,7 +190,7 @@ def get_summary():
 
 
 @app.get("/metrics/value-quadrants")
-def get_value_quadrants():
+def get_value_quadrants(response: Response):
     """
     For now I'm trying to classify players into four quadrants but its more complex than that:
     - Stars: high minutes, high performance
@@ -187,6 +198,7 @@ def get_value_quadrants():
     - Bargains: low fee, high performance
     - Dead weight: low minutes, low performance
     """
+    response.headers["Cache-Control"] = READ_CACHE_CONTROL
     players = [compute_metrics(p) for p in get_all_players()]
 
     paid = [p for p in players if p["fee_million"] > 0]
@@ -217,8 +229,9 @@ def get_value_quadrants():
 
 
 @app.get("/metrics/squad-gaps")
-def get_squad_gaps():
+def get_squad_gaps(response: Response):
     """Identify positional depth and age profile issues."""
+    response.headers["Cache-Control"] = READ_CACHE_CONTROL
     players = [compute_metrics(p) for p in get_all_players()]
     active = [p for p in players if p["status"] in ("active", "loan")]
 
@@ -238,7 +251,8 @@ def get_squad_gaps():
 
 
 @app.get("/seasons")
-def get_seasons():
+def get_seasons(response: Response):
+    response.headers["Cache-Control"] = READ_CACHE_CONTROL
     players = get_all_players()
     seasons = sorted(set(p["season"] for p in players if p.get("season")))
     return {"seasons": seasons}
