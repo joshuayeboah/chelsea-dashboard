@@ -4,9 +4,19 @@ __pycache__/
 .pytest_cache/
 .coverage
 venv/
+.venv/
 env/
 .env
 *.so
+
+# SQLite database — regenerated on boot from transfers.json (seed.py) plus
+# a live API-Football scrape (see main.py's lifespan). Never the source of
+# truth, so it shouldn't be versioned; committing it just caused binary
+# diff noise and let local/prod data silently diverge.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
 
 # React
 node_modules/
