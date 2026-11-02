@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 from fastapi import FastAPI, Query, BackgroundTasks, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -48,7 +49,18 @@ async def lifespan(app: FastAPI):
     init_db()
     if not get_all_players():
         seed()
-        run_all_scrapers()
+        # Fire the scrape in a worker thread rather than awaiting it here.
+        # Since chelsea.db is no longer committed (regenerated from scratch
+        # on every boot), this branch now runs on EVERY cold start — a free
+        # -tier spin-down after 15 idle minutes, not just a deploy. The
+        # scrape itself takes 30-90s+ (multiple seasons, rate-limited), and
+        # awaiting it here would block the lifespan — and therefore every
+        # request, including Render's own health check — for that whole
+        # window. This way the app starts serving the curated seed data
+        # immediately; live performance stats fill in moments later.
+        # run_all_scrapers() already catches its own exceptions and logs
+        # them to scrape_log, so there's nothing here to await or retrieve.
+        asyncio.get_event_loop().run_in_executor(None, run_all_scrapers)
     yield
 
 
