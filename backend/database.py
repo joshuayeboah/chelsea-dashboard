@@ -279,6 +279,28 @@ def insert_market_value(player_id: int, value: float):
     conn.close()
 
 
+def get_data_version():
+    """
+    A cheap, coarse 'has anything changed' signal — the most recent
+    last_updated timestamp across players and performance. Used to build
+    an ETag for the read endpoints, so a cached response can be validated
+    (and invalidated the instant a scrape or reseed actually changes
+    something) instead of just guessing a safe cache lifetime.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT MAX(last_updated) as version FROM (
+            SELECT last_updated FROM players
+            UNION ALL
+            SELECT last_updated FROM performance
+        )
+    """)
+    row = cursor.fetchone()
+    conn.close()
+    return row["version"] if row else None
+
+
 def log_scrape(scraper: str, status: str, message: str = ""):
     """Log a scraper run to the scrape_log table."""
     conn = get_connection()

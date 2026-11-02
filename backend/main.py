@@ -1,15 +1,39 @@
-from fastapi import FastAPI, Query, BackgroundTasks, Response
+import hashlib
+from fastapi import FastAPI, Query, BackgroundTasks, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 from contextlib import asynccontextmanager
-from database import init_db, get_players_with_filters, get_all_players
+from database import init_db, get_players_with_filters, get_all_players, get_data_version
 from scrapers import run_all_scrapers
 from seed import seed
 
 # Pure-read endpoints whose underlying data only changes on a scrape or a
-# transfers.json reseed (infrequent) — safe to cache aggressively so a CDN
-# or browser can absorb most read traffic without ever reaching the backend.
-READ_CACHE_CONTROL = "public, max-age=300, stale-while-revalidate=3600"
+# transfers.json reseed (infrequent) — safe to cache so a CDN or browser can
+# absorb most read traffic without reaching the backend. Kept short: 30s is
+# still a real win under burst traffic, but caps how long a response caught
+# mid-deploy (before a scrape finishes) could keep being replayed if one
+# ever got cached. stale-while-revalidate lets a cache serve instantly past
+# that and refresh in the background, validated cheaply via the ETag below
+# rather than blindly trusting whatever was cached.
+READ_CACHE_CONTROL = "public, max-age=30, stale-while-revalidate=300"
+
+
+def _etag_for_current_data() -> str:
+    version = get_data_version() or "empty"
+    return f'W/"{hashlib.sha256(version.encode()).hexdigest()[:16]}"'
+
+
+def _apply_read_cache_headers(request: Request, response: Response) -> bool:
+    """
+    Sets Cache-Control/ETag for a cacheable read endpoint. Returns True if
+    the client's cached copy is still current — the caller should then
+    respond 304 with no body instead of recomputing and resending the full
+    payload.
+    """
+    etag = _etag_for_current_data()
+    response.headers["Cache-Control"] = READ_CACHE_CONTROL
+    response.headers["ETag"] = etag
+    return request.headers.get("if-none-match") == etag
 
 
 
@@ -118,6 +142,7 @@ def root():
 
 @app.get("/transfers")
 def get_transfers(
+    request: Request,
     response: Response,
     position_group: Optional[str] = Query(None),
     season: Optional[str] = Query(None),
@@ -127,7 +152,8 @@ def get_transfers(
     limit: Optional[int] = Query(None, ge=1, le=500, description="Page size. Omit to get every matching signing (current default behaviour, unchanged)."),
     offset: int = Query(0, ge=0),
 ):
-    response.headers["Cache-Control"] = READ_CACHE_CONTROL
+    if _apply_read_cache_headers(request, response):
+        return Response(status_code=304)
 
     players = get_players_with_filters(position_group, season, status, min_fee, max_fee)
     results = [compute_metrics(p) for p in players]
@@ -140,8 +166,9 @@ def get_transfers(
 
 
 @app.get("/metrics/summary")
-def get_summary(response: Response):
-    response.headers["Cache-Control"] = READ_CACHE_CONTROL
+def get_summary(request: Request, response: Response):
+    if _apply_read_cache_headers(request, response):
+        return Response(status_code=304)
     players = [compute_metrics(p) for p in get_all_players()]
 
     total_spend = sum(p["fee_million"] for p in players)
@@ -190,7 +217,7 @@ def get_summary(response: Response):
 
 
 @app.get("/metrics/value-quadrants")
-def get_value_quadrants(response: Response):
+def get_value_quadrants(request: Request, response: Response):
     """
     For now I'm trying to classify players into four quadrants but its more complex than that:
     - Stars: high minutes, high performance
@@ -198,7 +225,8 @@ def get_value_quadrants(response: Response):
     - Bargains: low fee, high performance
     - Dead weight: low minutes, low performance
     """
-    response.headers["Cache-Control"] = READ_CACHE_CONTROL
+    if _apply_read_cache_headers(request, response):
+        return Response(status_code=304)
     players = [compute_metrics(p) for p in get_all_players()]
 
     paid = [p for p in players if p["fee_million"] > 0]
@@ -229,9 +257,10 @@ def get_value_quadrants(response: Response):
 
 
 @app.get("/metrics/squad-gaps")
-def get_squad_gaps(response: Response):
+def get_squad_gaps(request: Request, response: Response):
     """Identify positional depth and age profile issues."""
-    response.headers["Cache-Control"] = READ_CACHE_CONTROL
+    if _apply_read_cache_headers(request, response):
+        return Response(status_code=304)
     players = [compute_metrics(p) for p in get_all_players()]
     active = [p for p in players if p["status"] in ("active", "loan")]
 
@@ -251,8 +280,9 @@ def get_squad_gaps(response: Response):
 
 
 @app.get("/seasons")
-def get_seasons(response: Response):
-    response.headers["Cache-Control"] = READ_CACHE_CONTROL
+def get_seasons(request: Request, response: Response):
+    if _apply_read_cache_headers(request, response):
+        return Response(status_code=304)
     players = get_all_players()
     seasons = sorted(set(p["season"] for p in players if p.get("season")))
     return {"seasons": seasons}
